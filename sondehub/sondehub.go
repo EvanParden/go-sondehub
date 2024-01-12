@@ -28,6 +28,7 @@ type Stream struct {
 	mqttc     mqtt.Client
 	mqttMutex sync.Mutex
 	config    StreamConfig
+	log mqtt.Logger
 }
 
 type customLogger struct{}
@@ -50,6 +51,7 @@ func NewStream(options ...func(*StreamConfig)) *Stream {
 
 	s := &Stream{
 		config: config,
+		log:    config.OnLog, // Set the log field to OnLog callback
 	}
 	s.wsConnect()
 
@@ -135,11 +137,16 @@ func (s *Stream) RemoveSonde(sonde string) {
 }
 
 func (s *Stream) onStreamMessage(client mqtt.Client, msg mqtt.Message) {
-    if s.config.OnMessage != nil {
-        payload := msg.Payload()
-        fmt.Printf("Received message: %s\n", payload)
-        s.config.OnMessage(payload)
-    }
+	if s.config.OnMessage != nil {
+		payload := msg.Payload()
+		// Removed fmt.Printf statement
+		s.config.OnMessage(payload)
+	}
+
+	// Log the received message using the OnLog callback
+	if s.log != nil {
+		s.log.Println("Received message:", string(msg.Payload()))
+	}
 }
 
 func (s *Stream) wsConnect() {
