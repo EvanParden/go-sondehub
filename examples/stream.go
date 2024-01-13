@@ -7,7 +7,7 @@ import (
 )
 
 func onMessage(message []byte) {
-	fmt.Println(string(message))
+	fmt.Println("msg")
 }
 
 func main() {

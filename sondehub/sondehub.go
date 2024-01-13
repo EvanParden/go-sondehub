@@ -25,10 +25,11 @@ type StreamConfig struct {
 }
 
 type Stream struct {
-	mqttc     mqtt.Client
-	mqttMutex sync.Mutex
-	config    StreamConfig
-	log mqtt.Logger
+	mqttc        mqtt.Client
+	mqttMutex    sync.Mutex
+	config       StreamConfig
+	log          mqtt.Logger
+	MessageHandler func([]byte) // Added field for message handler
 }
 
 type customLogger struct{}
@@ -51,9 +52,9 @@ func NewStream(options ...func(*StreamConfig)) *Stream {
 
 	s := &Stream{
 		config: config,
-		log:    config.OnLog, // Set the log field to OnLog callback
+		log:    config.OnLog,
 	}
-	s.wsConnect()
+	s.WsConnect()
 
 	return s
 }
@@ -105,16 +106,30 @@ func WithPrefix(prefix string) func(*StreamConfig) {
 		c.Prefix = prefix
 	}
 }
+
+
+func (s *Stream) WsDisconnect() {
+	s.mqttMutex.Lock()
+	defer s.mqttMutex.Unlock()
+
+	// Disconnect from Sondehub
+	if s.mqttc != nil && s.mqttc.IsConnected() {
+		s.mqttc.Disconnect(0)
+	}
+}
+
+
+
 func (s *Stream) AddSonde(sonde string) {
 	s.mqttMutex.Lock()
 	defer s.mqttMutex.Unlock()
 
-	if !s.containsSonde(sonde) {
+	if !s.ContainsSonde(sonde) {
 		s.config.Sondes = append(s.config.Sondes, sonde)
 		token := s.mqttc.Subscribe(fmt.Sprintf("%s/%s", s.config.Prefix, sonde), 0, nil)
 		if token.Wait() && token.Error() != nil {
 			fmt.Println("Error subscribing to topic:", token.Error())
-			s.wsConnect()
+			s.WsConnect()
 		}
 	}
 }
@@ -129,7 +144,7 @@ func (s *Stream) RemoveSonde(sonde string) {
 			s.config.Sondes = append(s.config.Sondes[:i], s.config.Sondes[i+1:]...)
 			token := s.mqttc.Unsubscribe(fmt.Sprintf("%s/%s", s.config.Prefix, sonde))
 			if token.Wait() && token.Error() != nil {
-				s.wsConnect()
+				s.WsConnect()
 			}
 			break
 		}
@@ -149,12 +164,11 @@ func (s *Stream) onStreamMessage(client mqtt.Client, msg mqtt.Message) {
 	}
 }
 
-func (s *Stream) wsConnect() {
-
+func (s *Stream) WsConnect() {
 	s.mqttMutex.Lock()
-    defer s.mqttMutex.Unlock()
+	defer s.mqttMutex.Unlock()
 
-	serverURL := s.getURL()
+	serverURL := s.GetURL()
 	clientID := uuid.New().String()
 	topic := "sondes/#"
 
@@ -162,41 +176,27 @@ func (s *Stream) wsConnect() {
 	opts.AddBroker(serverURL)
 	opts.SetClientID(clientID)
 
-	opts.SetDefaultPublishHandler(s.onStreamMessage)
+	// Set the message handler if provided
+	if s.MessageHandler != nil {
+		opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
+			s.onStreamMessage(client, msg)
+		})
+	}
 
+	s.mqttc = mqtt.NewClient(opts)
 
-    // resURL := s.getURL()
-    // urlParts, err := url.Parse(resURL)
-    // if err != nil {
-    //     fmt.Println("Error parsing URL:", err)
-    //     return
-    // }
-
-	// fmt.Print(resURL)
-	// fmt.Print(urlParts.RawPath)
-
-    // headers := map[string][]string{
-    //     "Host": {urlParts.Host},
-    // }
-
-    s.mqttc = mqtt.NewClient(opts)
-
-    if token := s.mqttc.Connect(); token.Wait() && token.Error() != nil {
-        fmt.Println("Error connecting to MQTT:", token.Error())
-        os.Exit(1)
-    }
+	if token := s.mqttc.Connect(); token.Wait() && token.Error() != nil {
+		fmt.Println("Error connecting to MQTT:", token.Error())
+		os.Exit(1)
+	}
 
 	if token := s.mqttc.Subscribe(topic, 0, nil); token.Wait() && token.Error() != nil {
 		fmt.Println(token.Error())
 		os.Exit(1)
 	}
-
-
-
-
 }
 
-func (s *Stream) getURL() string {
+func (s *Stream) GetURL() string {
 	resp, err := http.Get("https://api.v2.sondehub.org/sondes/websocket")
 	if err != nil {
 		fmt.Println("Error getting URL:", err)
@@ -214,7 +214,7 @@ func (s *Stream) getURL() string {
 }
 
 
-func (s *Stream) containsSonde(sonde string) bool {
+func (s *Stream) ContainsSonde(sonde string) bool {
 	for _, v := range s.config.Sondes {
 		if v == sonde {
 			return true
