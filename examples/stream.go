@@ -7,13 +7,11 @@ import (
 )
 
 func onMessage(message []byte) {
-	fmt.Println("msg")
+	fmt.Println(string(message))
 }
 
 func main() {
-	sondehub.NewStream(
-		sondehub.WithOnMessage(onMessage),
-	)
+	sondehub.NewStream(onMessage)
 
 	select {}
 }
